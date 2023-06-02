@@ -1,3 +1,7 @@
 numpy>=1.19
+scipy
+
+sarw_spheres
 pygrpy>=0.1.2
+
 tqdm

@@ -1,6 +1,7 @@
 import numpy as np
 import scipy as sp
 import scipy.linalg
+import re
 
 import pygrpy
 import sarw_spheres
@@ -69,6 +70,31 @@ def hydrodynamic_size(
     bootstrap_rounds=10,
     progress=False,
 ):
+    """
+    Returns hydrodynamic size estimate from description of the bead-structure of the molecule.
+
+    Parameters
+    ----------
+    bead_steric_radii: np.array
+        Vector of length ``N`` describing steric sizes of beads. Used for conformer generation.
+    bead_hydrodynamic_radii: np.array
+        Vector of length ``N`` describing hydrodynamic sizes of beads. Used for mobility tensor estimation.
+    ensemble_size: int
+        Number of conformers to generate
+    bootstrap_rounds: int, default=10
+        Number of bootstrap rounds for numerical error estimation
+    progress: bool, default=False
+        Show progress bar during ensemble generation
+
+    Returns
+    -------
+    dict
+        Dictionary (string,float) with the following keys:
+        'rh_mda' -- hydrodynamic size in MDA approximation
+        'rh_mda (se)' -- standard error of the above
+        'rh_kr' -- hydrodynamic size in Kirkwood-Riseman approximation
+        'rh_kr (se)' -- standard error of the above
+    """
     bootstrap_vectors = np.random.choice(
         ensemble_size, (bootstrap_rounds, ensemble_size)
     )
@@ -77,12 +103,14 @@ def hydrodynamic_size(
     )  # zero'th round is simply normal (no randomization)
     bootstrap_weight_accum = np.zeros(
         bootstrap_rounds
-    )  # accumulate weight in averaging
+    )  # accumulated weight in averaging
 
     chain_length = len(bead_steric_radii)
 
-    average_trace_mobility = np.zeros((chain_length, chain_length))
-    average_pairwise_inverse_distance = np.zeros((chain_length, chain_length))
+    average_trace_mobility = np.zeros((bootstrap_rounds, chain_length, chain_length))
+    average_pairwise_inverse_distance = np.zeros(
+        (bootstrap_rounds, chain_length, chain_length)
+    )
 
     if progress:
         gen = tqdm.tqdm(range(ensemble_size))
@@ -103,9 +131,11 @@ def hydrodynamic_size(
         )
 
         for j in range(bootstrap_rounds):
-            weight = bootstrap_vectors[j].count(conformer_id)
+            weight = np.count_nonzero(bootstrap_vectors[j] == conformer_id)
             prev_weight = bootstrap_weight_accum[j]
             new_weight = prev_weight + weight
+            if new_weight == 0:
+                continue
 
             average_trace_mobility[j] = (
                 prev_weight / (new_weight)
@@ -122,16 +152,86 @@ def hydrodynamic_size(
     rh_mda = np.zeros(bootstrap_rounds)
     rh_kr = np.zeros(bootstrap_rounds)
 
-    for j in bootstrap_rounds:
+    for j in range(bootstrap_rounds):
         rh_mda[j] = minimum_dissipation_approximation(average_trace_mobility[j])
         rh_kr[j] = minimum_dissipation_approximation(
             average_pairwise_inverse_distance[j]
         )
 
     return {
-        "rh_mda": np.mean(rh_mda),
-        "rh_mda (se)": np.std(rh_mda),
+        "rh_mda": rh_mda[0],
+        "rh_mda (se)": np.std(rh_mda) / np.sqrt(bootstrap_rounds),
+        "rh_kr": rh_kr[0],
+        "rh_kr (se)": np.std(rh_kr) / np.sqrt(bootstrap_rounds),
+    }
 
-        "rh_kr": np.mean(rh_kr),
-        "rh_kr (se)": np.std(rh_kr),
+
+def bead_model_from_sequence(
+    annotated_sequence,
+    effective_density,
+    hydration_thickness,
+    disordered_radii,
+    c_alpha_distance,
+    aa_masses,
+):
+    """
+    Returns bead model from annotated protein sequence
+
+    Parameters
+    ----------
+    sequence: string
+        String describing protein sequence with square brackets [] denoting start/end of rigid domains.
+    effective_density: float
+        Effective density of rigid domain cores. Units: [Da / Angstrom^3]
+    hydration_thickness: float
+        Thickness of hydration layer of rigid domains. Units: [Angstrom]
+    disordered_radii: float
+        Hydrodynamic radius of each of the spheres modelling disordered segments. Units: [Angstrom]
+    c_alpha_distance: float
+        C alpha distance used as steric size of the beads in disordered segments. Units: [Angstrom]
+    aa_masses: dict
+        Dictionary mapping single letter codes to masses. Units: [Da]
+
+    Returns
+    -------
+    dict
+        Dictionary with following key-value pairs:
+        'bead_decription_compact' -- array with elements [r_h,r_s,repeat]
+        'steric_radii' -- long list of steric radii
+        'hydrodynamic_radii' -- long list of hydrodynamic radii
+    """
+
+    blocks = re.split(
+        "(\[[A-Z].*?\])", annotated_sequence
+    )  # things inside braces are blocks
+    bead_description_compact = []
+    for block in blocks:
+        if len(block) >= 2 and block[0] == "[":
+            block_mass = sum(aa_masses[aa] for aa in block[1:-1])
+            block_excluded_volume_radius = (
+                block_mass * (3 / (4 * math.pi)) / effective_density
+            ) ** (1 / 3)
+            block_radius = block_excluded_volume_radius + hydration_thickness
+
+            bead_description_compact.append([block_radius, block_radius, 1])
+        elif len(block) > 0:
+            bead_description_compact.append(
+                [
+                    disordered_radii,
+                    c_alpha_distance / 2,
+                    len(block),
+                ]
+            )
+
+    hydrodynamic_radii = []
+    steric_radii = []
+
+    for rh, rs, rep in bead_description_compact:
+        hydrodynamic_radii = hydrodynamic_radii + rep * [rh]
+        steric_radii = steric_radii + rep * [rs]
+
+    return {
+        "bead_description_compact": bead_description_compact,
+        "steric_radii": steric_radii,
+        "hydrodynamic_radii": hydrodynamic_radii,
     }
