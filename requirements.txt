@@ -1,7 +1,10 @@
 numpy>=1.19
 scipy
+pyyaml
+pytest
+pytest-datafiles
 
-sarw_spheres
+sarw_spheres>=0.0.8
 pygrpy>=0.1.2
 
 tqdm

@@ -19,7 +19,7 @@ def _lapackinv(mat):
 
 def minimum_dissipation_approximation(average_trace_mobility):
     """
-    Returns hydrodynamic size in Kirkwood-Riesman approximation
+    Returns hydrodynamic size in minimum dissipation approximation
     For details see:
     Cichocki, B; Rubin, M.; Niedzwiecka A. & Szymczak P.
     Diffusion coefficients of elastic macromolecules.
@@ -60,6 +60,7 @@ def kirkwood_riseman_approximation(average_pairwise_inverse_distance):
     """
 
     chain_length = len(average_pairwise_inverse_distance)
+
     return chain_length * (chain_length - 1) / np.sum(average_pairwise_inverse_distance)
 
 
@@ -154,7 +155,7 @@ def hydrodynamic_size(
 
     for j in range(bootstrap_rounds):
         rh_mda[j] = minimum_dissipation_approximation(average_trace_mobility[j])
-        rh_kr[j] = minimum_dissipation_approximation(
+        rh_kr[j] = kirkwood_riseman_approximation(
             average_pairwise_inverse_distance[j]
         )
 
@@ -202,14 +203,14 @@ def bead_model_from_sequence(
     """
 
     blocks = re.split(
-        "(\[[A-Z].*?\])", annotated_sequence
+        r"(\[[A-Z].*?\])", annotated_sequence
     )  # things inside braces are blocks
     bead_description_compact = []
     for block in blocks:
         if len(block) >= 2 and block[0] == "[":
             block_mass = sum(aa_masses[aa] for aa in block[1:-1])
             block_excluded_volume_radius = (
-                block_mass * (3 / (4 * math.pi)) / effective_density
+                block_mass * (3 / (4 * np.pi)) / effective_density
             ) ** (1 / 3)
             block_radius = block_excluded_volume_radius + hydration_thickness
 
@@ -231,7 +232,7 @@ def bead_model_from_sequence(
         steric_radii = steric_radii + rep * [rs]
 
     return {
-        "bead_description_compact": bead_description_compact,
-        "steric_radii": steric_radii,
-        "hydrodynamic_radii": hydrodynamic_radii,
+        "bead_description_compact": np.array(bead_description_compact),
+        "steric_radii": np.array(steric_radii),
+        "hydrodynamic_radii": np.array(hydrodynamic_radii),
     }
