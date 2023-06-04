@@ -1,4 +1,4 @@
-![Tests](https://TODO)
+[![Tests](https://github.com/RadostW/mdadiffusion/actions/workflows/tests.yml/badge.svg)](https://github.com/RadostW/mdadiffusion/actions/workflows/tests.yml)
 
 # MinimumDissipationApproximation
 
